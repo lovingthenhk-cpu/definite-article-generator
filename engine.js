@@ -23,6 +23,47 @@ mk("サンスクリット語","indoaryan","指示詞（転写）",{m:"saḥ tam 
 ];
 const FAMILIES={germanic:"ゲルマン",romance:"ロマンス",hellenic:"ギリシャ",slavic:"スラヴ",baltic:"バルト",indoaryan:"インド・アーリア"};
 function rng(seed){let h=2166136261;for(const c of seed){h=Math.imul(h^c.charCodeAt(0),16777619)}return()=>{h=(h+0x6D2B79F5)|0;let t=Math.imul(h^h>>>15,1|h);t^=t+Math.imul(t^t>>>7,61|t);return((t^t>>>14)>>>0)/4294967296}}
+// Only explicitly attested cells contribute evidence. Missing values are not equality.
+const SOURCE_CASES=["nom","acc","gen","dat","ins","abl","loc"];
+function observed(s, c, k) {
+ const n=s[c.n], g={c:"m",a:"m",i:"n"}[c.g]||c.g, i=SOURCE_CASES.indexOf(k);
+ if(i<0||!n||!n[g])return null;
+ const v=n[g].split(" ")[i];return v&&v!=="-"?v.normalize("NFC").toLowerCase():null;
+}
+function pairStats(fam,a,ka,b,kb){
+ let equal=0,total=0,localEqual=0,localTotal=0;
+ for(const s of SOURCES){let x=observed(s,a,ka),y=observed(s,b,kb);if(!x||!y)continue;total++;if(x===y)equal++;if(s.family===fam){localTotal++;if(x===y)localEqual++}}
+ // A weak structural prior, shrunk toward pooled observations and then family observations.
+ let prior=.06;
+ if(a.n===b.n&&a.g===b.g){
+  const ks=[ka,kb].sort().join(":");
+  if(ks==="acc:nom")prior=["n","i"].includes(a.g)?.90:a.n==="du"?.70:.34;
+  else if(ks==="dat:gen")prior=.42;
+  else if(ks==="abl:ins"||ks==="abl:dat"||ks==="dat:loc"||ks==="ins:loc")prior=.34;
+  else if(ks==="nom:voc")prior=.55;
+ }else if(a.n===b.n&&ka===kb){
+  prior=["gen","dat","ins","abl","loc"].includes(ka)?.28:.10;
+  if([a.g,b.g].includes("n")&&[a.g,b.g].some(g=>g==="m"||g==="c")&&["gen","dat","ins","abl","loc"].includes(ka))prior=.62;
+  if(a.n!=="sg")prior=Math.min(.78,prior+.20);
+ }else if(a.g===b.g&&ka===kb)prior=.10;
+ const pooled=(equal+4*prior)/(total+4);
+ return {p:(localEqual+5*pooled)/(localTotal+5),equal,total,localEqual,localTotal,prior};
+}
+// A pair of forms supplies a reusable ending or prefix alternation, not an unrelated new word.
+function alternation(x,y){
+ if(!x||!y||x===y)return null;
+ let n=0;while(n<Math.min(x.length,y.length)&&x[n]===y[n])n++;
+ let m=0;while(m<Math.min(x.length,y.length)&&x[x.length-1-m]===y[y.length-1-m])m++;
+ if(n&&n>=m)return {side:"suffix",from:x.slice(n),to:y.slice(n)};
+ if(m)return {side:"prefix",from:x.slice(0,x.length-m),to:y.slice(0,y.length-m)};
+ return null;
+}
+function applyAlternation(form,a){
+ if(!a)return null;
+ if(a.side==="suffix"&&form.endsWith(a.from)){let root=a.from?form.slice(0,-a.from.length):form;return root?root+a.to:null}
+ if(a.side==="prefix"&&form.startsWith(a.from)){let root=form.slice(a.from.length);return root?a.to+root:null}
+ return null;
+}
 function generate(o){
  const r=rng(String(o.seed)), pick=a=>a[Math.floor(r()*a.length)], chance=p=>r()<p, w=a=>{let x=r()*a.reduce((s,v)=>s+v[1],0);for(const [v,n] of a){x-=n;if(x<0)return v}return a.at(-1)[0]};
  const history=[], details=[], fam=o.family==="auto"?w([["germanic",35],["romance",35],["hellenic",10],["slavic",9],["baltic",5],["indoaryan",6]]):o.family;
@@ -68,20 +109,93 @@ function generate(o){
   for(const [c,p] of additions)if(ac(p))set.add(c);
   if(extra&&![...set].some(c=>!/[a-z]/.test(c)))set.add("ð");
   alphabet=[...set].sort((a,b)=>a.localeCompare(b,"en"));
- }else alphabet=[...new Set(String(o.alphabet).toLowerCase().normalize("NFC").replace(/[^\p{L}]/gu,""))];
- if(!alphabet.length)throw Error("使用文字を1文字以上指定してください");
+ }else alphabet=[...new Set(String(o.alphabet??"").toLowerCase().normalize("NFC").replace(/[^\p{L}]/gu,""))];
+ const unrestricted=mode==="manual"&&!String(o.alphabet??"").trim();
+ if(!alphabet.length&&!unrestricted)throw Error("文字を入力するか、空欄にしてください");
+ if(unrestricted)alphabetName="文字制限なし";
  const replacements={þ:["ð","th","t","d"],ð:["þ","d","th","t"],æ:["ae","e","a"],œ:["oe","e","o"],q:["k","c"],j:["i","y","g"],w:["v","u"],u:["v","o"],v:["u","w","f"],z:["s","t"],y:["i","u"],k:["c","g","q"],c:["k","s"],x:["ks","cs","s"],š:["sh","s"],ž:["zh","z","s"],č:["ch","c","t"],ñ:["ny","n"],ç:["s","c"],ŋ:["ng","n"],ł:["l"],ø:["o","e"]};
- const valid=x=>[...x].every(c=>alphabet.includes(c));
- const clean=x=>{let out="";for(const ch of x.normalize("NFC").toLowerCase()){
+ const valid=x=>unrestricted||[...x].every(c=>alphabet.includes(c));
+ const clean=x=>{if(unrestricted)return x.normalize("NFC").toLowerCase().replace(/[^\p{L}\p{M}]/gu,"")||"a";let out="";for(const ch of x.normalize("NFC").toLowerCase()){
   if(alphabet.includes(ch)){out+=ch;continue}
   let base=ch.normalize("NFD").replace(/\p{M}/gu,""), opts=[...(replacements[ch]||[]),base,...(replacements[base]||[])];
   let v=opts.find(t=>t&&valid(t));if(v)out+=v;
  }return out||alphabet[0]};
- history.push("文字体系："+alphabetName+"（"+alphabet.join(" ")+"）");
+ history.push("文字体系："+alphabetName+(unrestricted?"（語源・音韻変化で生じた文字をそのまま使用）":"（"+alphabet.join(" ")+"）"));
  const applied=new Set();
  let rows=cases.map(k=>({case:k,label:count===1?"格変化なし":CASES[k],cells:cols.map(col=>{const s=donorMap["case:"+k]||donorMap["gender:"+col.g]||donorMap["number:"+col.n]||primary;const a=get(s,col.n,col.g,k);let word=a.raw;for(const [label,re,repl] of selected){let old=word;word=word.replace(re,repl);if(old!==word)applied.add(label)}return {...a,form:clean(word)}})}));
  if(applied.size)history.push("共通音韻変化："+[...applied].join("、"));
- for(let j=0;j<cols.length;j++){if(rows.length>1&&chance(.12+ir*.36)){const a=1+Math.floor(r()*(rows.length-1)),b=Math.floor(r()*a);if(rows[a].cells[j].form!==rows[b].cells[j].form){rows[a].cells[j].form=rows[b].cells[j].form;rows[a].cells[j].origin+="・格融合";history.push(cols[j].label+"："+rows[a].label+"と"+rows[b].label+"が融合")}}}
+ // Correlated paradigms: one inherited/analogical gender rule can affect several cells,
+ // then exact identities are sampled as clusters, not independent unrelated strings.
+ const corr=Math.max(0,Math.min(1,Number(o.correlation??70)/100));
+ const cr=rng(String(o.seed)+"|correlation-v1"), cc=p=>cr()<p;
+ const cp=a=>a[Math.floor(cr()*a.length)];
+ const relations=[], relationRules=[];
+ const domain=k=>["nom","acc","voc"].includes(k)?"direct":"oblique";
+ const donor=(k,c)=>donorMap["case:"+k]||donorMap["gender:"+c.g]||donorMap["number:"+c.n]||primary;
+ if(corr>0)for(const n of nd){
+  const js=cols.map((c,j)=>c.n===n?j:-1).filter(j=>j>=0);if(js.length<2)continue;
+  const base=js[0];
+  for(const target of js.slice(1)){
+   if(!cc(corr*.72))continue;
+   const a=cols[base],b=cols[target], candidates=new Map();
+   for(const row of rows){
+    if(donor(row.case,a)!==donor(row.case,b))continue;
+    for(const src of SOURCES){
+     const x=observed(src,a,row.case),y=observed(src,b,row.case);
+     const rule=alternation(x&&clean(x),y&&clean(y));if(!rule)continue;
+     const group=domain(row.case), key=JSON.stringify([rule,group]), weight=(src.family===fam?3:1)*(src===primary?2:1);
+     const prev=candidates.get(key)||{rule,group,weight:0,examples:[]};prev.weight+=weight;prev.examples.push(src.name);candidates.set(key,prev);
+    }
+   }
+   const viable=[...candidates.values()].map(c=>({...c,coverage:rows.filter(row=>domain(row.case)===c.group&&donor(row.case,a)===donor(row.case,b)&&row.cells[base].form!==row.cells[target].form&&applyAlternation(row.cells[base].form,c.rule)).length})).filter(c=>c.coverage);
+   if(!viable.length)continue;
+   let total=viable.reduce((v,c)=>v+c.weight*c.coverage,0), z=cr()*total, chosen=viable.at(-1);
+   for(const c of viable){z-=c.weight*c.coverage;if(z<0){chosen=c;break}}
+   let changed=0;for(const row of rows){
+    if(domain(row.case)!==chosen.group||donor(row.case,a)!==donor(row.case,b)||row.cells[base].form===row.cells[target].form)continue;
+    const next=applyAlternation(row.cells[base].form,chosen.rule);
+    if(!next||next===row.cells[target].form||!valid(next))continue;
+    row.cells[target].form=next;row.cells[target].origin+="・"+a.label+"からの性の類推";changed++;
+   }
+   if(changed){const rule=chosen.rule;const label=(chosen.group==="direct"?"直接格":"斜格群")+"・"+(rule.side==="suffix"?"語末":"語頭")+" "+(rule.from||"Ø")+" → "+(rule.to||"Ø");relationRules.push({from:a.label,to:b.label,rule:label,changed,examples:[...new Set(chosen.examples)]});history.push(a.label+"→"+b.label+"：共通の性変化（"+label+"、"+changed+"格）")}
+  }
+ }
+ // Build candidate edges with data-backed probabilities; merge whole equality classes.
+ const size=rows.length*cols.length, ids=Array.from({length:size},(_,i)=>i), root=i=>{while(ids[i]!==i){ids[i]=ids[ids[i]];i=ids[i]}return i};
+ const cell=i=>rows[Math.floor(i/cols.length)].cells[i%cols.length];
+ const coord=i=>({col:cols[i%cols.length],k:rows[Math.floor(i/cols.length)].case});
+ const name=i=>rows[Math.floor(i/cols.length)].label+"・"+cols[i%cols.length].label;
+ const edges=[];
+ for(let i=0;i<size;i++)for(let j=i+1;j<size;j++){
+  let a=coord(i),b=coord(j);
+  // Same case or same gender/number across cases. Across-number comparisons require same case and gender.
+  const nearby=a.col.n===b.col.n&&(a.k===b.k||a.col.g===b.col.g)||a.k===b.k&&a.col.g===b.col.g;
+  let st=pairStats(fam,a.col,a.k,b.col,b.k);
+  if(!nearby&&!(st.total>=3&&st.equal/st.total>=.35))continue;
+  const sameDonor=donor(a.k,a.col)===donor(b.k,b.col);
+  let p=st.p*corr*(sameDonor?1:.38);
+  if(a.col.n!==b.col.n)p*=.50;
+  if(!nearby)p*=.35;
+  edges.push({i,j,p,stats:st,sameDonor,order:cr()});
+ }
+ edges.sort((a,b)=>b.p-a.p||a.order-b.order);
+ // Existing identical forms are already equal, including identities inherited from the source.
+ const initial=new Map();for(let i=0;i<size;i++){let f=cell(i).form;if(initial.has(f))ids[i]=root(initial.get(f));else initial.set(f,i)}
+ const joined=new Set();
+ for(const e of edges){
+  const {i,j,p,stats}=e;let a=root(i),b=root(j);let wasEqual=cell(i).form===cell(j).form;
+  let applied=false;
+  if(corr>0&&a!==b&&cc(p)&&(!joined.has(a)||!joined.has(b))){
+   const from=cell(a).form,to=cell(b).form;
+   if(from!==to){
+    const affected=ids.map((_,k)=>k).filter(k=>root(k)===b);
+    for(const k of affected){cell(k).form=from;cell(k).origin+="・条件付き格／性融合"}
+    ids[b]=a;joined.add(a);applied=true;
+    history.push(name(i)+"＝"+name(j)+"（条件付き融合）");
+   }
+  }
+  relations.push({i,j,left:name(i),right:name(j),probability:p,observed:stats.equal,observations:stats.total,familyObserved:stats.localEqual,familyObservations:stats.localTotal,inherited:wasEqual,applied});
+ }
  // Defective paradigms: prioritize peripheral cases; allow systematic gender/number gaps.
  const gapRate=Math.max(0,Math.min(1,Number(o.gaps??30)/100));
  const gapWeight={nom:0,acc:.12,gen:.26,dat:.28,ins:1,abl:.85,loc:.88,voc:1.6,obl:.15,com:1.2,par:1.15,all:1.3,ela:1.3};
@@ -111,7 +225,9 @@ function generate(o){
   if(dropped)history.push(LABEL[n]+"の冠詞体系が全体として欠損");
  }
  if(chance(ir*.23)){const a=Math.floor(r()*rows.length),j=Math.floor(r()*cols.length),cell=rows[a].cells[j];if(cell.form!=="—"){let v=clean(cell.form+pick(["e","n","a","s"]));if(v!==cell.form){cell.form+=" / "+v;cell.origin+="・異形態残存";history.push(rows[a].label+"・"+cols[j].label+"に異形態が残存")}}}
+ for(const rel of relations){const a=cell(rel.i).form,b=cell(rel.j).form;rel.equal=a!=="—"&&b!=="—"&&a===b}
  const unique=new Set(rows.flatMap(row=>row.cells.flatMap(c=>c.form==="—"?[]:c.form.split(" / ")))).size;
- return {seed:o.seed,family:FAMILIES[fam],gender,number,cols,rows,sources:sources.map(s=>s.name),history,unique,alphabet,alphabetName,gapCount};
+ const usedAlphabet=[...new Set(rows.flatMap(row=>row.cells.flatMap(c=>[...c.form].filter(ch=>/\p{L}/u.test(ch)))))].sort((a,b)=>a.localeCompare(b,"en"));
+ return {seed:o.seed,family:FAMILIES[fam],gender,number,cols,rows,sources:sources.map(s=>s.name),history,unique,alphabet,alphabetName,unrestricted,usedAlphabet,gapCount,relations,relationRules};
 }
-if(typeof module!=="undefined")module.exports={generate,SOURCES};
+if(typeof module!=="undefined")module.exports={generate,SOURCES,pairStats};
