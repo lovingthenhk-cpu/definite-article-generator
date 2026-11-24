@@ -50,15 +50,68 @@ function generate(o){
  const transformations=[
  ["þ→ð",/þ/g,"ð"],["þ→th",/þ/g,"th"],["þ→d",/þ/g,"d"],["語末母音脱落",/[aeiouy]$/g,""],["語末 m→n",/m$/g,"n"],["語末 s→r",/s$/g,"r"],["ll→l",/ll/g,"l"],["ai→e",/ai/g,"e"],["ae→e",/ae/g,"e"],["語頭 h 脱落",/^h/g,""],["語末 t→d",/t$/g,"d"],["語末 d 脱落",/d$/g,""],["語中 o→u",/o(?=.)/g,"u"],["語末 a→e",/a$/g,"e"],["語末 i→e",/i$/g,"e"],["語末子音重複の簡略化",/(.)\1$/g,"$1"],["語頭 d→ð",/^d/g,"ð"],["語末 n 脱落",/n$/g,""]];
  const selected=[];for(let i=0;i<Math.floor(1+r()*(2+ir*8));i++){const t=pick(transformations.filter(t=>!selected.includes(t)));if(t)selected.push(t)}
- const alphabet=[...new Set(String(o.alphabet).toLowerCase().normalize("NFC").replace(/[^\p{L}]/gu,""))];if(!alphabet.length)throw Error("使用文字を1文字以上指定してください");
- const clean=x=>{x=x.normalize("NFD").replace(/\p{M}/gu,"").toLowerCase().replace(/æ/g,"ae").replace(/œ/g,"oe").replace(/þ/g,alphabet.includes("ð")?"ð":"th").replace(/ð/g,alphabet.includes("ð")?"ð":"d");let y=[...x].map(c=>alphabet.includes(c)?c:({q:"k",j:"i",w:"v",u:"v",v:"u",z:"s",y:"i",k:"c",c:"k",x:"s"}[c]&&alphabet.includes({q:"k",j:"i",w:"v",u:"v",v:"u",z:"s",y:"i",k:"c",c:"k",x:"s"}[c])?{q:"k",j:"i",w:"v",u:"v",v:"u",z:"s",y:"i",k:"c",c:"k",x:"s"}[c]:"")).join("");return y||alphabet[0]};
+ // Random alphabets are whole orthographic inventories, not independently sampled noise.
+ const mode=o.alphabetMode||"manual";
+ let alphabetName="手動指定", alphabet;
+ if(mode==="auto"||mode==="extended"){
+  const ar=rng(String(o.seed)+"|alphabet-v2"), ac=p=>ar()<p;
+  const profiles=[["古典ラテン文字","abcdefghiklmnopqrstvx yz",fam==="romance"?28:12],["現代ラテン文字","abcdefghijklmnopqrstuvwxyz",28],["簡素なラテン文字","abcdefghijklmnopqrstuv",20],["ゲルマン風ラテン文字","abcdefghijklmnopqrstuvwxyz",fam==="germanic"?35:10],["拡張ラテン文字","abcdefghijklmnopqrstuvwxyz",mode==="extended"?75:12],["小規模ラテン文字","abdefghiklmnoprstu",8]];
+  let roll=ar()*profiles.reduce((a,v)=>a+v[2],0), profile=profiles.at(-1);
+  for(const t of profiles){roll-=t[2];if(roll<0){profile=t;break}}
+  alphabetName=profile[0];let set=new Set(profile[1].replace(/ /g,""));
+  const classical=profile[0]==="古典ラテン文字";
+  for(const [c,p] of [["q",.30],["x",.25],["z",.23],["w",fam==="germanic"?.10:.42],["j",.25],["k",fam==="romance"?.48:.12],["y",.22]])if(ac(p))set.delete(c);
+  if(!classical&&ac(.10))set.delete("v");
+  const extra=mode==="extended"||profile[0]==="拡張ラテン文字";
+  const germ=profile[0]==="ゲルマン風ラテン文字"||fam==="germanic";
+  const additions=[["ð",germ?.55:extra?.36:.10],["þ",germ?.33:extra?.20:.035],["æ",germ?.36:extra?.35:.07],["œ",fam==="romance"?.23:extra?.30:.05],["š",fam==="slavic"||fam==="baltic"?.45:extra?.27:.045],["ž",fam==="slavic"||fam==="baltic"?.32:extra?.21:.025],["č",fam==="slavic"||fam==="baltic"?.34:extra?.24:.035],["ñ",fam==="romance"?.23:extra?.19:.035],["ç",fam==="romance"?.20:extra?.20:.035],["ŋ",extra?.22:.045],["ł",fam==="slavic"?.21:extra?.18:.025],["ø",germ?.24:extra?.25:.04],["å",germ?.23:extra?.22:.03],["ä",germ?.25:extra?.25:.035],["ö",germ?.26:extra?.25:.035],["ü",germ?.22:extra?.23:.035],["ā",extra?.35:.04],["ē",extra?.30:.035],["ī",extra?.25:.025],["ō",extra?.25:.025],["ū",extra?.25:.025]];
+  for(const [c,p] of additions)if(ac(p))set.add(c);
+  if(extra&&![...set].some(c=>!/[a-z]/.test(c)))set.add("ð");
+  alphabet=[...set].sort((a,b)=>a.localeCompare(b,"en"));
+ }else alphabet=[...new Set(String(o.alphabet).toLowerCase().normalize("NFC").replace(/[^\p{L}]/gu,""))];
+ if(!alphabet.length)throw Error("使用文字を1文字以上指定してください");
+ const replacements={þ:["ð","th","t","d"],ð:["þ","d","th","t"],æ:["ae","e","a"],œ:["oe","e","o"],q:["k","c"],j:["i","y","g"],w:["v","u"],u:["v","o"],v:["u","w","f"],z:["s","t"],y:["i","u"],k:["c","g","q"],c:["k","s"],x:["ks","cs","s"],š:["sh","s"],ž:["zh","z","s"],č:["ch","c","t"],ñ:["ny","n"],ç:["s","c"],ŋ:["ng","n"],ł:["l"],ø:["o","e"]};
+ const valid=x=>[...x].every(c=>alphabet.includes(c));
+ const clean=x=>{let out="";for(const ch of x.normalize("NFC").toLowerCase()){
+  if(alphabet.includes(ch)){out+=ch;continue}
+  let base=ch.normalize("NFD").replace(/\p{M}/gu,""), opts=[...(replacements[ch]||[]),base,...(replacements[base]||[])];
+  let v=opts.find(t=>t&&valid(t));if(v)out+=v;
+ }return out||alphabet[0]};
+ history.push("文字体系："+alphabetName+"（"+alphabet.join(" ")+"）");
  const applied=new Set();
  let rows=cases.map(k=>({case:k,label:count===1?"格変化なし":CASES[k],cells:cols.map(col=>{const s=donorMap["case:"+k]||donorMap["gender:"+col.g]||donorMap["number:"+col.n]||primary;const a=get(s,col.n,col.g,k);let word=a.raw;for(const [label,re,repl] of selected){let old=word;word=word.replace(re,repl);if(old!==word)applied.add(label)}return {...a,form:clean(word)}})}));
  if(applied.size)history.push("共通音韻変化："+[...applied].join("、"));
  for(let j=0;j<cols.length;j++){if(rows.length>1&&chance(.12+ir*.36)){const a=1+Math.floor(r()*(rows.length-1)),b=Math.floor(r()*a);if(rows[a].cells[j].form!==rows[b].cells[j].form){rows[a].cells[j].form=rows[b].cells[j].form;rows[a].cells[j].origin+="・格融合";history.push(cols[j].label+"："+rows[a].label+"と"+rows[b].label+"が融合")}}}
- if(rows.length>1&&chance(ir*.18)){const a=1+Math.floor(r()*(rows.length-1)),j=Math.floor(r()*cols.length);rows[a].cells[j].form="—";rows[a].cells[j].origin+="・冠詞脱落";history.push(cols[j].label+"の"+rows[a].label+"で冠詞が消失")}
+ // Defective paradigms: prioritize peripheral cases; allow systematic gender/number gaps.
+ const gapRate=Math.max(0,Math.min(1,Number(o.gaps??30)/100));
+ const gapWeight={nom:0,acc:.12,gen:.26,dat:.28,ins:1,abl:.85,loc:.88,voc:1.6,obl:.15,com:1.2,par:1.15,all:1.3,ela:1.3};
+ const eligible=rows.map((row,i)=>[i,gapWeight[row.case]||0]).filter(x=>x[1]>0);
+ let gapCount=0;
+ function omit(i,j,why){
+  const cell=rows[i].cells[j];if(cell.form==="—"||gapCount>=rows.length*cols.length-1)return false;
+  cell.form="—";cell.origin+="・冠詞欠損（"+why+"）";gapCount++;return true;
+ }
+ if(gapRate>0&&eligible.length&&chance(gapRate)){
+  const rounds=1+(chance(gapRate*.65)?1:0)+(chance(gapRate*.35)?1:0);
+  for(let t=0;t<rounds;t++){
+   const i=w(eligible), row=rows[i], mode=w([["case",25],["gender",25],["number",20],["cell",30]]);
+   let js=[];
+   if(mode==="case")js=cols.map((_,j)=>j);
+   else if(mode==="gender"){const g=pick(cols).g;js=cols.map((c,j)=>c.g===g?j:-1).filter(j=>j>=0)}
+   else if(mode==="number"){const n=pick(cols).n;js=cols.map((c,j)=>c.n===n?j:-1).filter(j=>j>=0)}
+   else js=[Math.floor(r()*cols.length)];
+   const dropped=js.filter(j=>omit(i,j,"格・性・数に条件付けられた脱落"));
+   if(dropped.length)history.push(row.label+"の"+dropped.map(j=>cols[j].label).join("・")+"で冠詞が欠損");
+  }
+ }
+ // Some numbers (especially dual) never grammaticalize the article; preserve at least one article.
+ if(gapRate>0&&nd.length>1&&chance(gapRate*.22)){
+  const n=nd.includes("du")&&chance(.75)?"du":pick(nd.slice(1)), js=cols.map((c,j)=>c.n===n?j:-1).filter(j=>j>=0);
+  let dropped=0;for(let i=0;i<rows.length;i++)for(const j of js)if(omit(i,j,"数全体で冠詞が存在しない"))dropped++;
+  if(dropped)history.push(LABEL[n]+"の冠詞体系が全体として欠損");
+ }
  if(chance(ir*.23)){const a=Math.floor(r()*rows.length),j=Math.floor(r()*cols.length),cell=rows[a].cells[j];if(cell.form!=="—"){let v=clean(cell.form+pick(["e","n","a","s"]));if(v!==cell.form){cell.form+=" / "+v;cell.origin+="・異形態残存";history.push(rows[a].label+"・"+cols[j].label+"に異形態が残存")}}}
  const unique=new Set(rows.flatMap(row=>row.cells.flatMap(c=>c.form==="—"?[]:c.form.split(" / ")))).size;
- return {seed:o.seed,family:FAMILIES[fam],gender,number,cols,rows,sources:sources.map(s=>s.name),history,unique};
+ return {seed:o.seed,family:FAMILIES[fam],gender,number,cols,rows,sources:sources.map(s=>s.name),history,unique,alphabet,alphabetName,gapCount};
 }
 if(typeof module!=="undefined")module.exports={generate,SOURCES};
